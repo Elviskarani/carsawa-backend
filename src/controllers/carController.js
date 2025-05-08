@@ -1,18 +1,98 @@
 const Car = require('../models/Car');
+const { cloudinary } = require('../config/cloudinary');
+const multer = require('multer');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const path = require('path');
 
-// @desc    Create a new car listing
+// Configure cloudinary storage for this specific endpoint
+const carImageStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'carsawa/cars',
+    allowed_formats: ['jpeg', 'jpg', 'png', 'gif', 'webp'],
+    transformation: [{ width: 1200, crop: 'limit' }],
+    public_id: (req, file) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+      return `${uniqueSuffix}${path.parse(file.originalname).name}`;
+    }
+  }
+});
+
+// Create multer upload instance for car images
+const uploadCarImages = multer({
+  storage: carImageStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB file size limit
+    files: 10 // Maximum 10 files per upload
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedFileTypes = /jpeg|jpg|png|gif|webp/;
+    const extname = allowedFileTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedFileTypes.test(file.mimetype);
+
+    if (extname && mimetype) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'));
+    }
+  }
+}).array('images', 10);
+
+// @desc    Create a new car listing with images
 // @route   POST /api/cars
 // @access  Private
 const createCar = async (req, res) => {
   try {
-    // Add the dealer ID from the authenticated user
-    req.body.dealer = req.dealer._id;
-    
-    const car = await Car.create(req.body);
-    
-    res.status(201).json(car);
+    // Handle file uploads first
+    uploadCarImages(req, res, async (err) => {
+      if (err) {
+        console.error('Image upload error:', err);
+        return res.status(400).json({ message: err.message || 'Error uploading images' });
+      }
+      
+      try {
+        // Parse car details from the form data
+        const carData = req.body;
+        
+        // Add the dealer ID from the authenticated user
+        carData.dealer = req.dealer._id;
+        
+        // Process uploaded images if any
+        if (req.files && req.files.length > 0) {
+          // Extract URLs from the uploaded files
+          carData.images = req.files.map(file => ({
+            url: file.path,
+            publicId: file.filename
+          }));
+          
+          // Extract just the URLs for storage in the car model
+          carData.images = carData.images.map(img => img.url);
+        } else {
+          // Initialize as empty array if no images were uploaded
+          carData.images = [];
+          
+          // If images were provided as URLs in the request body, validate and use them
+          if (carData.imageUrls && Array.isArray(carData.imageUrls)) {
+            const validImages = carData.imageUrls.filter(url => 
+              typeof url === 'string' && 
+              (url.startsWith('http://') || url.startsWith('https://'))
+            );
+            carData.images = validImages;
+            delete carData.imageUrls; // Remove the imageUrls field
+          }
+        }
+        
+        // Create the car with all data
+        const car = await Car.create(carData);
+        
+        res.status(201).json(car);
+      } catch (error) {
+        console.error('Car creation error:', error);
+        res.status(500).json({ message: 'Server error' });
+      }
+    });
   } catch (error) {
-    console.error(error);
+    console.error('Outer error in createCar:', error);
     res.status(500).json({ message: 'Server error' });
   }
 };
@@ -129,6 +209,16 @@ const updateCar = async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to update this car' });
     }
     
+    // Handle images array if present in the update
+    if (req.body.images && Array.isArray(req.body.images)) {
+      // Validate that images is an array of URL strings
+      const validImages = req.body.images.filter(url => 
+        typeof url === 'string' && 
+        (url.startsWith('http://') || url.startsWith('https://'))
+      );
+      req.body.images = validImages;
+    }
+    
     // Update car with new data
     const updatedCar = await Car.findByIdAndUpdate(
       req.params.id,
@@ -224,5 +314,6 @@ module.exports = {
   getCarById,
   updateCar,
   deleteCar,
-  updateCarStatus
+  updateCarStatus,
+  uploadCarImages // Export the upload middleware for route usage
 };

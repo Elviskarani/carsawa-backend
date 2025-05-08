@@ -6,7 +6,8 @@ const {
   getCarById, 
   updateCar, 
   deleteCar, 
-  updateCarStatus 
+  updateCarStatus,
+  uploadCarImages
 } = require('../controllers/carController');
 const { protect } = require('../middleware/auth');
 const { carValidation, validateRequest } = require('../middleware/validation');
@@ -15,8 +16,8 @@ const { carValidation, validateRequest } = require('../middleware/validation');
 router.get('/', getCars);
 router.get('/:id', getCarById);
 
-// Protected routes
-router.post('/', protect, carValidation, validateRequest, createCar);
+// Protected routes - direct file upload + car creation in one step
+router.post('/', protect, createCar);
 router.put('/:id', protect, updateCar);
 router.delete('/:id', protect, deleteCar);
 router.put('/:id/status', protect, updateCarStatus);
